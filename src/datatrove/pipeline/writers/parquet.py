@@ -5,40 +5,6 @@ from datatrove.io import DataFolderLike
 from datatrove.pipeline.writers.disk_base import DiskWriter
 
 
-def parquet_fix(document: dict) -> dict:
-    """
-    You can create your own adapter that returns a dictionary in your preferred format,
-    while addressing the Parquet issue with empty struct fields.
-
-    Args:
-        document: document to format
-
-    Returns: a dictionary to write to disk
-    """
-
-    def ensure_non_empty_structs(data):
-        """
-        Recursively ensure that any dictionary which would correspond to an empty struct
-        in Parquet has a dummy field added.
-        """
-        for key, value in data.items():
-            if isinstance(value, dict):
-                # Recursively fix nested dictionaries
-                data[key] = ensure_non_empty_structs(value)
-                # Add a dummy field if the dictionary is empty
-                if not data[key]:
-                    data[key] = {"__dummy_field": None}
-        return data
-
-    data = {key: val for key, val in document.items() if val}
-
-    # if self.expand_metadata and "metadata" in data:
-    #     data |= data.pop("metadata")
-
-    # Fix empty structs in the dictionary
-    return ensure_non_empty_structs(data)
-
-
 class ParquetWriter(DiskWriter):
     default_output_filename: str = "${rank}.parquet"
     name = "📒 Parquet"
@@ -87,32 +53,30 @@ class ParquetWriter(DiskWriter):
         self._writers.pop(original_name).close()
         super()._on_file_switch(original_name, old_filename, new_filename)
 
-    def _write_batch(self, filename):
+    def _write_batch(self, filename, file_handler=None):
         if not self._batches[filename]:
             return
         import pyarrow as pa
+        import pyarrow.parquet as pq
 
         # prepare batch
         _batch = self._batches.pop(filename)
         batch = pa.RecordBatch.from_pylist(_batch)
-        # write batch
-        self._writers[filename].write_batch(batch)
-
-    def _write(self, document: dict, file_handler: IO, filename: str):
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-
-        document = parquet_fix(document)
 
         if filename not in self._writers:
             self._writers[filename] = pq.ParquetWriter(
                 file_handler,
-                schema=pa.RecordBatch.from_pylist([document]).schema,
+                schema=batch.schema,
                 compression=self.compression,
             )
+
+        # write batch
+        self._writers[filename].write_batch(batch)
+
+    def _write(self, document: dict, file_handler: IO, filename: str):
         self._batches[filename].append(document)
         if len(self._batches[filename]) == self.batch_size:
-            self._write_batch(filename)
+            self._write_batch(filename, file_handler)
 
     def close(self):
         for filename in list(self._batches.keys()):
