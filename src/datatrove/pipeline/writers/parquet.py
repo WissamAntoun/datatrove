@@ -53,7 +53,7 @@ class ParquetWriter(DiskWriter):
         self._writers.pop(original_name).close()
         super()._on_file_switch(original_name, old_filename, new_filename)
 
-    def _write_batch(self, filename, file_handler=None):
+    def _write_batch(self, filename, file_handler: IO):
         if not self._batches[filename]:
             return
         import pyarrow as pa
@@ -80,7 +80,7 @@ class ParquetWriter(DiskWriter):
 
     def close(self):
         for filename in list(self._batches.keys()):
-            self._write_batch(filename)
+            self._write_batch(filename, self.output_mg.get_file(filename))
         for writer in self._writers.values():
             writer.close()
         self._batches.clear()
