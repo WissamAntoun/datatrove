@@ -80,7 +80,10 @@ class ParquetWriter(DiskWriter):
 
     def close(self):
         for filename in list(self._batches.keys()):
-            self._write_batch(filename, self.output_mg.get_file(filename))
+            self._write_batch(
+                filename,
+                self.output_mg.get_file(self._get_filename_with_file_id(filename)),
+            )
         for writer in self._writers.values():
             writer.close()
         self._batches.clear()
