@@ -26,6 +26,8 @@ class TransformerClassifierEnricher(BaseEnricher):
         split_mode: str = SPLIT_TEXT_DOCUMENTS,
         store_units: str = False,
         batch_size: int = 1,
+        model_batch_size: int = None,
+        sort_batch_by_length: bool = False,
         **kwargs,
     ):
         super().__init__(batch_size)
@@ -33,6 +35,8 @@ class TransformerClassifierEnricher(BaseEnricher):
         self.field_name = field_name
         self.split_mode = split_mode
         self.store_units = store_units
+        self.sort_batch_by_length = sort_batch_by_length
+        self.model_batch_size = model_batch_size if model_batch_size else batch_size
         self._model = None
         self._kwargs = kwargs
 
@@ -44,7 +48,7 @@ class TransformerClassifierEnricher(BaseEnricher):
             self._model = pipeline(
                 "text-classification",
                 model=self.model_name_or_path,
-                batch_size=self.batch_size,
+                batch_size=self.model_batch_size,
                 **self._kwargs,
             )
         return self._model
@@ -57,13 +61,29 @@ class TransformerClassifierEnricher(BaseEnricher):
             batch_id_to_text_batch_id_map[idx] = [idx + i for i in range(len(units))]
             text_batch.extend(units)
 
-        scores = self.model(text_batch)
+        if self.sort_batch_by_length:
+            # sort batch by length and maintain a mapping dict to the original order
+            ibatch = list(enumerate(text_batch))  # [ (0, doc0), (1, doc1), (2, doc2), ...]
+            sbatch = sorted(ibatch, key=lambda x: len(x[1]), reverse=True)  # [(2, doc2), (0, doc0), (1, doc1), ...]
+            sbatch_data = [x[1] for x in sbatch]  # [doc2, doc0, doc1, ...]
+            sbatch_mapping = {i: x[0] for i, x in enumerate(sbatch)}  # {0: 2, 1: 0, 2: 1}
+        else:
+            sbatch_data = text_batch
+
+        # Do the actual classification
+        scores = self.model(sbatch_data)
+
+        if self.sort_batch_by_length:
+            # sort back to original order
+            scores_orig_batch_order = [scores[sbatch_mapping[i]] for i in range(len(sbatch_data))]
+        else:
+            scores_orig_batch_order = scores
 
         for idx, doc in enumerate(batch):
             label_scores = []
             for text_id in batch_id_to_text_batch_id_map[idx]:
                 _label_scores = {}
-                _label_scores["score"] = scores[text_id]
+                _label_scores["score"] = scores_orig_batch_order[text_id]
                 if self.store_units:
                     _label_scores["unit"] = text_batch[text_id]
                 label_scores.append(_label_scores)
