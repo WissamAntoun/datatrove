@@ -5,6 +5,25 @@ from datatrove.pipeline.enrichers.base_enricher import BaseEnricher
 from datatrove.utils.text import SPLIT_TEXT_DOCUMENTS, split_into_parts
 
 
+def default_pre_process(docs: List[Document]):
+    return docs
+
+
+def url_injection_pre_process(docs: List[Document]):
+    # return {"texts": [doc.metadata["url"] + "\n\n" + doc.text for doc in docs]}
+    preped_docs = []
+    for doc in docs:
+        doc.text = doc.metadata.get("url", "") + "\n\n" + doc.text
+        preped_docs.append(doc)
+    return preped_docs
+
+
+PREPROCESSORS = {
+    "default": default_pre_process,
+    "url_injection": url_injection_pre_process,
+}
+
+
 class TransformerClassifierEnricher(BaseEnricher):
     """Adds the output of a Transformer classifier to the metadata of the document.
 
@@ -28,6 +47,7 @@ class TransformerClassifierEnricher(BaseEnricher):
         batch_size: int = 1,
         model_batch_size: int = None,
         sort_batch_by_length: bool = False,
+        preprocess_fn: str = "default",
         **kwargs,
     ):
         super().__init__(batch_size)
@@ -37,6 +57,7 @@ class TransformerClassifierEnricher(BaseEnricher):
         self.store_units = store_units
         self.sort_batch_by_length = sort_batch_by_length
         self.model_batch_size = model_batch_size if model_batch_size else batch_size
+        self.pre_process = PREPROCESSORS[preprocess_fn]
         self._model = None
         self._kwargs = kwargs
 
@@ -54,6 +75,8 @@ class TransformerClassifierEnricher(BaseEnricher):
         return self._model
 
     def enrich_batch(self, batch: List[Document]) -> List[Document]:
+        batch = self.pre_process(batch)
+
         text_batch = []
         batch_id_to_text_batch_id_map = {}
         for idx, doc in enumerate(batch):
@@ -71,7 +94,7 @@ class TransformerClassifierEnricher(BaseEnricher):
             sbatch_data = text_batch
 
         # Do the actual classification
-        scores = self.model(sbatch_data)
+        scores = self.model(sbatch_data, **self._kwargs)
 
         if self.sort_batch_by_length:
             # sort back to original order
