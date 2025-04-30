@@ -48,7 +48,8 @@ class TransformerClassifierEnricher(BaseEnricher):
         model_batch_size: int = None,
         sort_batch_by_length: bool = False,
         preprocess_fn: str = "default",
-        **kwargs,
+        pipeline_kwargs: dict = None,
+        call_kwargs: dict = None,
     ):
         super().__init__(batch_size)
         self.model_name_or_path = model_name_or_path
@@ -59,7 +60,8 @@ class TransformerClassifierEnricher(BaseEnricher):
         self.model_batch_size = model_batch_size if model_batch_size else batch_size
         self.pre_process = PREPROCESSORS[preprocess_fn]
         self._model = None
-        self._kwargs = kwargs
+        self.pipeline_kwargs = pipeline_kwargs if pipeline_kwargs else {}
+        self.call_kwargs = call_kwargs if call_kwargs else {}
 
     @property
     def model(self):
@@ -70,7 +72,7 @@ class TransformerClassifierEnricher(BaseEnricher):
                 "text-classification",
                 model=self.model_name_or_path,
                 batch_size=self.model_batch_size,
-                **self._kwargs,
+                **self.pipeline_kwargs,
             )
         return self._model
 
@@ -94,7 +96,7 @@ class TransformerClassifierEnricher(BaseEnricher):
             sbatch_data = text_batch
 
         # Do the actual classification
-        scores = self.model(sbatch_data, **self._kwargs)
+        scores = self.model(sbatch_data, **self.call_kwargs)
 
         if self.sort_batch_by_length:
             # sort back to original order
