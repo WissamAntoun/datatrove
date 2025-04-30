@@ -66,11 +66,14 @@ class TransformerClassifierEnricher(BaseEnricher):
     @property
     def model(self):
         if self._model is None:
-            from transformers import pipeline
+            from transformers import AutoTokenizer, pipeline
 
             self._model = pipeline(
                 "text-classification",
                 model=self.model_name_or_path,
+                tokenizer=AutoTokenizer.from_pretrained(
+                    self.model_name_or_path,
+                ),
                 batch_size=self.model_batch_size,
                 **self.pipeline_kwargs,
             )
@@ -91,7 +94,7 @@ class TransformerClassifierEnricher(BaseEnricher):
             ibatch = list(enumerate(text_batch))  # [ (0, doc0), (1, doc1), (2, doc2), ...]
             sbatch = sorted(ibatch, key=lambda x: len(x[1]), reverse=True)  # [(2, doc2), (0, doc0), (1, doc1), ...]
             sbatch_data = [x[1] for x in sbatch]  # [doc2, doc0, doc1, ...]
-            sbatch_mapping = {i: x[0] for i, x in enumerate(sbatch)}  # {0: 2, 1: 0, 2: 1}
+            sbatch_mapping = {x[0]: i for i, x in enumerate(sbatch)}  # {0: 2, 1: 0, 2: 1}
         else:
             sbatch_data = text_batch
 
