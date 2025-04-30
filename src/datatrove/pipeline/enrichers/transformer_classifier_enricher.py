@@ -48,7 +48,10 @@ class TransformerClassifierEnricher(BaseEnricher):
         model_batch_size: int = None,
         sort_batch_by_length: bool = False,
         preprocess_fn: str = "default",
+        num_gpus: int = 1,
         pipeline_kwargs: dict = None,
+        model_kwargs: dict = None,
+        tokenizer_kwargs: dict = None,
         call_kwargs: dict = None,
     ):
         super().__init__(batch_size)
@@ -60,26 +63,56 @@ class TransformerClassifierEnricher(BaseEnricher):
         self.model_batch_size = model_batch_size if model_batch_size else batch_size
         self.pre_process = PREPROCESSORS[preprocess_fn]
         self._model = None
+        self.num_gpus = num_gpus
         self.pipeline_kwargs = pipeline_kwargs if pipeline_kwargs else {}
+        self.model_kwargs = model_kwargs if model_kwargs else {}
+        self.tokenizer_kwargs = tokenizer_kwargs if tokenizer_kwargs else {}
         self.call_kwargs = call_kwargs if call_kwargs else {}
+
+        if self.num_gpus > 1:
+            print(f"Warning: Using multiple GPUs ({self.num_gpus}) for inference.")
 
     @property
     def model(self):
         if self._model is None:
-            from transformers import AutoTokenizer, pipeline
-
-            self._model = pipeline(
-                "text-classification",
-                model=self.model_name_or_path,
-                tokenizer=AutoTokenizer.from_pretrained(
-                    self.model_name_or_path,
-                ),
-                batch_size=self.model_batch_size,
-                **self.pipeline_kwargs,
+            from transformers import (
+                AutoModelForSequenceClassification,
+                AutoTokenizer,
+                TextClassificationPipeline,
             )
+
+            if self.num_gpus == 1:
+                self._model = TextClassificationPipeline(
+                    model=AutoModelForSequenceClassification.from_pretrained(
+                        self.model_name_or_path,
+                        **self.model_kwargs,
+                    ),
+                    tokenizer=AutoTokenizer.from_pretrained(
+                        self.model_name_or_path,
+                        **self.tokenizer_kwargs,
+                    ),
+                    **self.pipeline_kwargs,
+                )
+            else:
+                self._model = [
+                    TextClassificationPipeline(
+                        model=AutoModelForSequenceClassification.from_pretrained(
+                            self.model_name_or_path,
+                            **self.model_kwargs,
+                        ),
+                        tokenizer=AutoTokenizer.from_pretrained(
+                            self.model_name_or_path,
+                            **self.tokenizer_kwargs,
+                        ),
+                        **self.pipeline_kwargs,
+                        device=i,
+                    )
+                    for i in range(self.num_gpus)
+                ]
+
         return self._model
 
-    def enrich_batch(self, batch: List[Document]) -> List[Document]:
+    def _do_inference(self, batch, model):
         batch = self.pre_process(batch)
 
         text_batch = []
@@ -99,7 +132,7 @@ class TransformerClassifierEnricher(BaseEnricher):
             sbatch_data = text_batch
 
         # Do the actual classification
-        scores = self.model(sbatch_data, **self.call_kwargs)
+        scores = model(sbatch_data, **self.call_kwargs)
 
         if self.sort_batch_by_length:
             # sort back to original order
@@ -116,6 +149,32 @@ class TransformerClassifierEnricher(BaseEnricher):
                     _label_scores["unit"] = text_batch[text_id]
                 label_scores.append(_label_scores)
             doc.metadata[self.field_name] = label_scores
+
+        return batch
+
+    def enrich_batch(self, batch: List[Document]) -> List[Document]:
+        if self.num_gpus == 1:
+            batch = self._do_inference(batch)
+        else:
+            indexed_batch = list(enumerate(batch))
+
+            per_gpu_batch = [indexed_batch[i :: self.num_gpus] for i in range(self.num_gpus)]
+
+            from concurrent.futures import ThreadPoolExecutor
+
+            def run_pipeline_with_index(pipe, indexed_inputs):
+                results = self._do_inference([text for idx, text in indexed_inputs], pipe)
+                return [(indexed_inputs[i][0], result) for i, result in enumerate(results)]
+
+            with ThreadPoolExecutor(max_workers=self.num_gpus) as executor:
+                results = list(executor.map(run_pipeline_with_index, self.model, per_gpu_batch))
+
+            # Flatten the results
+            results = [item for sublist in results for item in sublist]
+            # Sort the results back to the original order
+            results.sort(key=lambda x: x[0])
+            # Unpack the results
+            batch = [result[1] for result in results]
 
         return batch
 
