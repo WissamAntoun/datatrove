@@ -1,7 +1,9 @@
+import time
 from typing import List
 
 from datatrove.data import Document
 from datatrove.pipeline.enrichers.base_enricher import BaseEnricher
+from datatrove.utils.logging import logger
 from datatrove.utils.text import SPLIT_TEXT_DOCUMENTS, split_into_parts
 
 
@@ -113,6 +115,7 @@ class TransformerClassifierEnricher(BaseEnricher):
         return self._model
 
     def _do_inference(self, batch, model):
+        logger.info(f"Enriching batch of size {len(batch)} ")
         batch = self.pre_process(batch)
 
         text_batch = []
@@ -131,8 +134,10 @@ class TransformerClassifierEnricher(BaseEnricher):
         else:
             sbatch_data = text_batch
 
+        start_time = time.time()
         # Do the actual classification
         scores = model(sbatch_data, **self.call_kwargs)
+        logger.info(f"Finished inferencing in {time.time() - start_time:.2f} seconds")
 
         if self.sort_batch_by_length:
             # sort back to original order
@@ -156,6 +161,7 @@ class TransformerClassifierEnricher(BaseEnricher):
         if self.num_gpus == 1:
             batch = self._do_inference(batch)
         else:
+            logger.info(f"Enriching batch of size {len(batch)} with {self.num_gpus} GPUs")
             indexed_batch = list(enumerate(batch))
 
             per_gpu_batch = [indexed_batch[i :: self.num_gpus] for i in range(self.num_gpus)]
@@ -175,6 +181,7 @@ class TransformerClassifierEnricher(BaseEnricher):
             results.sort(key=lambda x: x[0])
             # Unpack the results
             batch = [result[1] for result in results]
+            logger.info("Finished enriching batch")
 
         return batch
 
