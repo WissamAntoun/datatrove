@@ -328,8 +328,6 @@ class SlurmPipelineExecutor(PipelineExecutor):
         os.makedirs(self.slurm_logs_folder, exist_ok=True)
         slurm_logfile = os.path.join(self.slurm_logs_folder, "%A_%a.out")
         sbatch_args = {
-            "cpus-per-task": self.cpus_per_task,
-            "mem-per-cpu": f"{self.mem_per_cpu_gb}G",
             "job-name": self.job_name,
             "time": self.time,
             "output": slurm_logfile,
@@ -344,6 +342,10 @@ class SlurmPipelineExecutor(PipelineExecutor):
             sbatch_args["qos"] = self.qos
         if self.partition:
             sbatch_args["partition"] = self.partition
+        if self.mem_per_cpu_gb:
+            sbatch_args["mem-per-cpu"] = f"{self.mem_per_cpu_gb}G"
+        if self.cpus_per_task:
+            sbatch_args["cpus-per-task"] = self.cpus_per_task
         return sbatch_args
 
     def get_launch_file_contents(self, sbatch_args: dict, run_script: str) -> str:
